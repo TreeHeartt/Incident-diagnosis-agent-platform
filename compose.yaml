@@ -1,0 +1,138 @@
+x-app:
+  build: .
+  environment: &id001
+    DATABASE_URL: postgresql+psycopg://incident:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD
+      in .env}@db/incidents
+    SRE_BENCH_PATH: /opt/sre-bench
+    ENABLE_CLOUD_MODEL: ${ENABLE_CLOUD_MODEL:-false}
+    LANGSMITH_TRACING: 'false'
+  volumes: &id002
+  - type: bind
+    source: ${SRE_BENCH_PATH:?Set SRE_BENCH_PATH in .env}
+    target: /opt/sre-bench
+    read_only: true
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: incidents
+      POSTGRES_USER: incident
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+    - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U incident -d incidents
+      interval: 3s
+      retries: 20
+  migrate:
+    build: .
+    environment: *id001
+    volumes: *id002
+    command: python -m incident_simulator.manage migrate
+    depends_on:
+      db:
+        condition: service_healthy
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://incident:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD
+        in .env}@db/incidents
+      SRE_BENCH_PATH: /opt/sre-bench
+      ENABLE_CLOUD_MODEL: ${ENABLE_CLOUD_MODEL:-false}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LANGSMITH_TRACING: 'false'
+      MCP_URL: ${MCP_URL}
+      MCP_SERVICE_TOKEN: ${MCP_SERVICE_TOKEN}
+      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL}
+      LANGFUSE_PUBLIC_URL: ${LANGFUSE_PUBLIC_URL}
+      LANGFUSE_PROJECT_ID: ${LANGFUSE_PROJECT_ID}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      ENABLE_JUDGES: ${ENABLE_JUDGES:-false}
+      JUDGE_A_MODEL: ${JUDGE_A_MODEL:-}
+      JUDGE_A_BASE_URL: ${JUDGE_A_BASE_URL:-}
+      JUDGE_A_API_KEY: ${JUDGE_A_API_KEY:-}
+      JUDGE_B_MODEL: ${JUDGE_B_MODEL:-}
+      JUDGE_B_BASE_URL: ${JUDGE_B_BASE_URL:-}
+      JUDGE_B_API_KEY: ${JUDGE_B_API_KEY:-}
+    volumes: *id002
+    ports:
+    - 127.0.0.1:8765:8080
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health')
+      interval: 5s
+      retries: 20
+  worker:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://incident:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD
+        in .env}@db/incidents
+      SRE_BENCH_PATH: /opt/sre-bench
+      ENABLE_CLOUD_MODEL: ${ENABLE_CLOUD_MODEL:-false}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LANGSMITH_TRACING: 'false'
+      MCP_URL: ${MCP_URL}
+      MCP_SERVICE_TOKEN: ${MCP_SERVICE_TOKEN}
+      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL}
+      LANGFUSE_PUBLIC_URL: ${LANGFUSE_PUBLIC_URL}
+      LANGFUSE_PROJECT_ID: ${LANGFUSE_PROJECT_ID}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      ENABLE_JUDGES: ${ENABLE_JUDGES:-false}
+      JUDGE_A_MODEL: ${JUDGE_A_MODEL:-}
+      JUDGE_A_BASE_URL: ${JUDGE_A_BASE_URL:-}
+      JUDGE_A_API_KEY: ${JUDGE_A_API_KEY:-}
+      JUDGE_B_MODEL: ${JUDGE_B_MODEL:-}
+      JUDGE_B_BASE_URL: ${JUDGE_B_BASE_URL:-}
+      JUDGE_B_API_KEY: ${JUDGE_B_API_KEY:-}
+    volumes: *id002
+    command: python -m incident_simulator.worker
+    depends_on:
+      api:
+        condition: service_healthy
+  qdrant:
+    image: registry-1.docker.io/qdrant/qdrant:v1.20.0
+    volumes:
+    - qdrantdata:/qdrant/storage
+  mcp:
+    build: .
+    command: python -m incident_simulator.mcp_server
+    environment:
+      DATABASE_URL: postgresql+psycopg://incident:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD
+        in .env}@db/incidents
+      SRE_BENCH_PATH: /opt/sre-bench
+      ENABLE_CLOUD_MODEL: ${ENABLE_CLOUD_MODEL:-false}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LANGSMITH_TRACING: 'false'
+      MCP_SERVICE_TOKEN: ${MCP_SERVICE_TOKEN}
+      QDRANT_URL: http://qdrant:6333
+      MODEL_CACHE: /models
+      MODEL_OFFLINE: "true"
+    volumes:
+    - "${RAG_MODEL_PATH:?Set RAG_MODEL_PATH in .env}:/models"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_started
+volumes:
+  pgdata: null
+  qdrantdata: {}
+  modelcache: {}

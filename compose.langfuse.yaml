@@ -1,0 +1,163 @@
+services:
+  langfuse-worker:
+    image: docker.langfuse.com/langfuse/langfuse-worker:${LANGFUSE_IMAGE_TAG:-4}
+    restart: always
+    depends_on:
+      lf-postgres: &id001
+        condition: service_healthy
+      lf-minio: &id002
+        condition: service_healthy
+      lf-redis: &id003
+        condition: service_healthy
+      lf-clickhouse: &id004
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:${LF_PASSWORD}@lf-postgres:5432/postgres
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: ${LF_NEXTAUTH_SECRET}
+      SALT: ${LF_SALT}
+      ENCRYPTION_KEY: ${LF_ENCRYPTION_KEY}
+      TELEMETRY_ENABLED: 'false'
+      CLICKHOUSE_URL: http://lf-clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://lf-clickhouse:9000
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LF_PASSWORD}
+      CLICKHOUSE_CLUSTER_ENABLED: 'false'
+      REDIS_HOST: lf-redis
+      REDIS_PORT: '6379'
+      REDIS_AUTH: ${LF_PASSWORD}
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LF_PASSWORD}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://lf-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: 'true'
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  langfuse-web:
+    image: docker.langfuse.com/langfuse/langfuse:${LANGFUSE_IMAGE_TAG:-4}
+    restart: always
+    depends_on:
+      lf-postgres: *id001
+      lf-minio: *id002
+      lf-redis: *id003
+      lf-clickhouse: *id004
+    environment:
+      DATABASE_URL: postgresql://postgres:${LF_PASSWORD}@lf-postgres:5432/postgres
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: ${LF_NEXTAUTH_SECRET}
+      SALT: ${LF_SALT}
+      ENCRYPTION_KEY: ${LF_ENCRYPTION_KEY}
+      TELEMETRY_ENABLED: 'false'
+      CLICKHOUSE_URL: http://lf-clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://lf-clickhouse:9000
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LF_PASSWORD}
+      CLICKHOUSE_CLUSTER_ENABLED: 'false'
+      REDIS_HOST: lf-redis
+      REDIS_PORT: '6379'
+      REDIS_AUTH: ${LF_PASSWORD}
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LF_PASSWORD}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://lf-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: 'true'
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_INIT_ORG_ID: incident-org
+      LANGFUSE_INIT_ORG_NAME: IncidentSimulator
+      LANGFUSE_INIT_PROJECT_ID: incident-project
+      LANGFUSE_INIT_PROJECT_NAME: IncidentSimulator
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL: admin@incident.local
+      LANGFUSE_INIT_USER_NAME: admin
+      LANGFUSE_INIT_USER_PASSWORD: ${LF_PASSWORD}
+    ports:
+    - 127.0.0.1:3000:3000
+  lf-clickhouse:
+    image: registry-1.docker.io/clickhouse/clickhouse-server:26.3.62.3
+    restart: always
+    user: 101:101
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LF_PASSWORD}
+    volumes:
+    - langfuse_clickhouse_data:/var/lib/clickhouse
+    - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit
+        1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+  lf-minio:
+    image: cgr.dev/chainguard/minio
+    restart: always
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address
+      ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: ${LF_PASSWORD}
+    volumes:
+    - langfuse_minio_data:/data
+    healthcheck:
+      test:
+      - CMD
+      - mc
+      - ready
+      - local
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 1s
+  lf-redis:
+    image: registry-1.docker.io/library/redis:7
+    restart: always
+    command: --requirepass ${LF_PASSWORD} --maxmemory-policy
+      noeviction
+    volumes:
+    - langfuse_redis_data:/data
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - -a
+      - ${LF_PASSWORD}
+      - ping
+      interval: 3s
+      timeout: 10s
+      retries: 10
+  lf-postgres:
+    image: registry-1.docker.io/library/postgres:17
+    restart: always
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U postgres
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${LF_PASSWORD}
+      POSTGRES_DB: postgres
+    volumes:
+    - langfuse_postgres_data:/var/lib/postgresql/data
+volumes:
+  langfuse_postgres_data:
+    driver: local
+  langfuse_clickhouse_data:
+    driver: local
+  langfuse_clickhouse_logs:
+    driver: local
+  langfuse_minio_data:
+    driver: local
+  langfuse_redis_data:
+    driver: local
+networks:
+  default:
+    external: true
+    name: incident-simulator_default
